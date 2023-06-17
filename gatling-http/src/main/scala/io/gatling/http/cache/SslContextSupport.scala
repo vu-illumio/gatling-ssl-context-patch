@@ -28,8 +28,10 @@ import io.gatling.http.util.SslContexts
 
 import com.typesafe.scalalogging.StrictLogging
 
-private[http] object SslContextSupport extends StrictLogging {
+object SslContextSupport extends StrictLogging {
   private val HttpSslContextsAttributeName: String = SessionPrivateAttributes.generatePrivateAttribute("http.ssl.sslContexts")
+  private var _httpProtocol: HttpProtocol = _
+  private var _httpEngine: HttpEngine = _
 
   private def resolvePerUserKeyManagerFactory(session: Session, perUserKeyManagerFactory: Option[Long => KeyManagerFactory]): Option[KeyManagerFactory] =
     perUserKeyManagerFactory match {
@@ -44,7 +46,11 @@ private[http] object SslContextSupport extends StrictLogging {
       case _ => None
     }
 
-  def setSslContexts(httpProtocol: HttpProtocol, httpEngine: HttpEngine): Session => Session =
+  def setSslContexts(httpProtocol: HttpProtocol, httpEngine: HttpEngine): Session => Session = {
+    /** Illumio: store copies at initialization */
+    _httpProtocol = httpProtocol
+    _httpEngine = httpEngine
+
     if (httpProtocol.enginePart.shareConnections) {
       Session.Identity
     } else { session =>
@@ -52,6 +58,14 @@ private[http] object SslContextSupport extends StrictLogging {
       val sslContexts = httpEngine.newSslContexts(httpProtocol.enginePart.enableHttp2, perUserKeyManagerFactory)
       session.set(HttpSslContextsAttributeName, sslContexts)
     }
+  }
+
+  /** Illumio: refresh SSL contexts */
+  def setSslContexts(session: Session): Session = {
+    val perUserKeyManagerFactory = resolvePerUserKeyManagerFactory(session, _httpProtocol.enginePart.perUserKeyManagerFactory)
+    val sslContexts = _httpEngine.newSslContexts(_httpProtocol.enginePart.enableHttp2, perUserKeyManagerFactory)
+    session.set(HttpSslContextsAttributeName, sslContexts)
+  }
 
   def sslContexts(session: Session): Option[SslContexts] =
     session.attributes.get(HttpSslContextsAttributeName).map(_.asInstanceOf[SslContexts])
